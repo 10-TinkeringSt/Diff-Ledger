@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Diff Ledger — Intelligent CSV Comparison</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div class="wrap">
+  <div id="headerRow" style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px;">
+    <div>
+      <h1>Diff Ledger</h1>
+      <p class="sub">Upload two comparable CSVs. Diff Ledger joins rows by key column(s) and sorts every pair into Match, Mismatch, A only, or B only — instantly with local rules, optionally double-checked by AI for wording-only differences.</p>
+    </div>
+    <button class="btn ghost small" id="themeToggle" style="flex-shrink:0;">☀ Light mode</button>
+  </div>
+
+  <!-- STEP 1: Upload -->
+  <details class="card" id="uploadSection" open>
+    <summary style="cursor:pointer; font-family:'Space Grotesk',sans-serif; font-size:15px; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; color:var(--ink-soft);"><span class="step-num">1</span>Upload files</summary>
+    <div class="dropzones" style="margin-top:14px;">
+      <label class="dropzone" id="dzA">
+        <input type="file" id="fileA" accept=".csv">
+        <div class="dz-label">File A</div>
+        <div class="dz-file" id="dzAName">Click or drop CSV here</div>
+        <div class="dz-hint" id="dzAInfo"></div>
+      </label>
+      <label class="dropzone" id="dzB">
+        <input type="file" id="fileB" accept=".csv">
+        <div class="dz-label">File B</div>
+        <div class="dz-file" id="dzBName">Click or drop CSV here</div>
+        <div class="dz-hint" id="dzBInfo"></div>
+      </label>
+    </div>
+  </details>
+
+  <!-- STEP 2: Configure + run Fast -->
+  <details class="card hidden" id="step2" open>
+    <summary style="cursor:pointer; font-family:'Space Grotesk',sans-serif; font-size:15px; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; color:var(--ink-soft);"><span class="step-num">2</span>Configure columns</summary>
+    <div style="margin-top:14px;">
+      <div class="col-config" id="colConfig"></div>
+      <div id="extraColsBox" style="margin-top:14px;"></div>
+      <div class="run-row">
+        <button class="btn" id="runBtn">Run comparison (Fast)</button>
+        <span class="status-msg" id="runStatus"></span>
+      </div>
+    </div>
+  </details>
+
+  <!-- Results -->
+  <div id="results" class="hidden">
+    <div class="tally" id="tally"></div>
+
+    <div class="card full-bleed" id="tableCard">
+      <div class="toolbar">
+        <input class="search" id="searchBox" placeholder="Search key, values, or reason…">
+        <button class="btn ghost" id="exportBtn">Export CSV (full results)</button>
+        <button class="btn ghost" id="printBtn">Print / Save as PDF</button>
+      </div>
+      <div class="cap-banner" id="capBanner"></div>
+      <div class="table-wrap">
+        <table class="results">
+          <colgroup>
+            <col class="col-key"><col class="col-a"><col class="col-b"><col class="col-status"><col class="col-reason">
+          </colgroup>
+          <thead><tr id="resultHead"></tr></thead>
+          <tbody id="resultBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- AI review offer -->
+    <details class="card ai-card" id="aiCard" open>
+      <summary style="cursor:pointer; font-family:'Space Grotesk',sans-serif; font-size:15px; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; color:var(--ink-soft);"><span class="step-num">3</span>Optional: AI review of mismatches</summary>
+      <div style="margin-top:14px;">
+        <div id="aiQueueInfo" class="banner info"></div>
+        <div class="ai-modes" id="aiModes">
+          <div class="ai-opt active" data-mode="cloud">
+            <div class="m-title">☁ Cloud (bring your own API key)</div>
+            <div class="m-desc">Sends flagged rows to Claude via the Anthropic API. Fast, needs a key + internet.</div>
+          </div>
+          <div class="ai-opt" data-mode="local">
+            <div class="m-title">💻 Local (WebLLM, no internet after first load)</div>
+            <div class="m-desc">Runs a small model in your browser via WebGPU. No key, no data leaves your machine, slower.</div>
+          </div>
+        </div>
+
+        <div id="cloudFields">
+          <div class="field-row">
+            <label>Anthropic API key — only needed outside claude.ai. Stays in this tab's memory only.</label>
+            <input type="password" id="apiKeyInput" placeholder="sk-ant-...">
+          </div>
+        </div>
+        <div id="localFields" class="hidden">
+          <div class="field-row">
+            <label>Model</label>
+            <select id="localModelSelect">
+              <option value="Qwen2.5-0.5B-Instruct-q4f16_1-MLC">Qwen2.5 0.5B — fastest, lightest (~400MB)</option>
+              <option value="Qwen2.5-1.5B-Instruct-q4f16_1-MLC">Qwen2.5 1.5B — better judgment, slower (~1GB)</option>
+              <option value="Qwen2.5-3B-Instruct-q4f16_1-MLC">Qwen2.5 3B — best local judgment, slowest, most memory (~2GB)</option>
+            </select>
+            <button class="btn ghost small" id="loadModelBtn" style="margin-top:8px;">Load model</button>
+            <button class="btn ghost small" id="clearModelCacheBtn" style="margin-top:8px;">Clear cached model files</button>
+            <span class="status-msg" id="modelLoadStatus"></span>
+            <div class="progress-outer" id="modelLoadBarOuter" style="display:none;"><div class="progress-inner" id="modelLoadBar"></div></div>
+          </div>
+        </div>
+
+        <div class="field-row">
+          <label>Limit AI review to first N queued rows (optional — leave blank to review all)</label>
+          <input type="number" id="capInput" placeholder="e.g. 2000" min="1">
+        </div>
+
+        <div class="run-row">
+          <button class="btn" id="startAiBtn">Start AI review</button>
+          <span class="status-msg" id="aiStatus"></span>
+        </div>
+        <div class="progress-outer" id="aiBarOuter" style="display:none;"><div class="progress-inner" id="aiBar"></div></div>
+        <div id="aiError" class="banner warn hidden"></div>
+      </div>
+    </details>
+  </div>
+
+  <!-- How this works -->
+  <details class="card" id="howItWorksSection">
+    <summary style="cursor:pointer; font-family:'Space Grotesk',sans-serif; font-size:15px; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; color:var(--ink-soft);">How this works (click to expand)</summary>
+    <div style="margin-top:16px; display:flex; justify-content:center;">
+      <svg viewBox="0 0 680 640" style="width:100%; max-width:560px; height:auto; font-family:'IBM Plex Sans',sans-serif;">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M2,1 L8,5 L2,9" fill="none" stroke="var(--ink-soft)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </marker>
+        </defs>
+
+        <!-- File A / File B -->
+        <rect x="90" y="20" width="160" height="48" rx="8" fill="var(--panel)" stroke="var(--hairline)" stroke-width="0.75"/>
+        <text x="170" y="40" text-anchor="middle" font-size="16" font-weight="600" fill="var(--ink)">File A</text>
+        <text x="170" y="58" text-anchor="middle" font-size="13" fill="var(--ink-soft)">Uploaded CSV</text>
+        <rect x="390" y="20" width="160" height="48" rx="8" fill="var(--panel)" stroke="var(--hairline)" stroke-width="0.75"/>
+        <text x="470" y="40" text-anchor="middle" font-size="16" font-weight="600" fill="var(--ink)">File B</text>
+        <text x="470" y="58" text-anchor="middle" font-size="13" fill="var(--ink-soft)">Uploaded CSV</text>
+
+        <path d="M170,68 L170,95 L290,95 L290,120" fill="none" stroke="var(--ink-soft)" stroke-width="1.25" marker-end="url(#arrow)"/>
+        <path d="M470,68 L470,95 L350,95 L350,120" fill="none" stroke="var(--ink-soft)" stroke-width="1.25" marker-end="url(#arrow)"/>
+
+        <!-- Fast Compare -->
+        <rect x="230" y="120" width="180" height="64" rx="8" fill="var(--panel)" stroke="var(--accent)" stroke-width="1.25"/>
+        <text x="320" y="147" text-anchor="middle" font-size="16" font-weight="600" fill="var(--ink)">Fast Compare</text>
+        <text x="320" y="165" text-anchor="middle" font-size="13" fill="var(--ink-soft)">Joins rows by Key</text>
+
+        <path d="M320,184 L320,205 L190,205 L190,230" fill="none" stroke="var(--ink-soft)" stroke-width="1.25" marker-end="url(#arrow)"/>
+        <path d="M320,184 L320,205 L470,205 L470,230" fill="none" stroke="var(--ink-soft)" stroke-width="1.25" marker-end="url(#arrow)"/>
+
+        <!-- Confident -->
+        <rect x="70" y="230" width="240" height="56" rx="8" fill="var(--match-bg)" stroke="var(--match-line)" stroke-width="0.75"/>
+        <text x="190" y="254" text-anchor="middle" font-size="16" font-weight="600" fill="var(--match-fg)">Confident results</text>
+        <text x="190" y="272" text-anchor="middle" font-size="13" fill="var(--match-fg)">Match, mismatch, unique</text>
+
+        <!-- Low-confidence -->
+        <rect x="350" y="230" width="240" height="56" rx="8" fill="var(--mismatch-bg)" stroke="var(--mismatch-line)" stroke-width="0.75"/>
+        <text x="470" y="254" text-anchor="middle" font-size="16" font-weight="600" fill="var(--mismatch-fg)">Low-confidence mismatches</text>
+        <text x="470" y="272" text-anchor="middle" font-size="13" fill="var(--mismatch-fg)">Wording differs, needs a look</text>
+
+        <line x1="470" y1="286" x2="470" y2="330" stroke="var(--ink-soft)" stroke-width="1.25" marker-end="url(#arrow)"/>
+
+        <!-- AI review (dashed = optional) -->
+        <rect x="350" y="330" width="240" height="56" rx="8" fill="var(--panel)" stroke="var(--accent)" stroke-width="1.25" stroke-dasharray="5 4"/>
+        <text x="470" y="354" text-anchor="middle" font-size="16" font-weight="600" fill="var(--ink)">AI semantic review</text>
+        <text x="470" y="372" text-anchor="middle" font-size="13" fill="var(--ink-soft)">Optional — your choice of engine</text>
+
+        <path d="M470,386 L470,406 L395,406 L395,430" fill="none" stroke="var(--ink-soft)" stroke-width="1.25" marker-end="url(#arrow)"/>
+        <path d="M470,386 L470,406 L545,406 L545,430" fill="none" stroke="var(--ink-soft)" stroke-width="1.25" marker-end="url(#arrow)"/>
+
+        <!-- Cloud / Local -->
+        <rect x="330" y="430" width="130" height="56" rx="8" fill="var(--panel)" stroke="var(--hairline)" stroke-width="0.75"/>
+        <text x="395" y="454" text-anchor="middle" font-size="17" font-weight="600" fill="var(--ink)">Cloud model</text>
+        <text x="395" y="472" text-anchor="middle" font-size="13" fill="var(--ink-soft)">Your API key</text>
+        <rect x="480" y="430" width="130" height="56" rx="8" fill="var(--panel)" stroke="var(--hairline)" stroke-width="0.75"/>
+        <text x="545" y="454" text-anchor="middle" font-size="17" font-weight="600" fill="var(--ink)">Local model</text>
+        <text x="545" y="472" text-anchor="middle" font-size="13" fill="var(--ink-soft)">Runs in-browser</text>
+
+        <!-- Convergence into Diff table -->
+        <line x1="190" y1="286" x2="190" y2="540" stroke="var(--ink-soft)" stroke-width="1.25" marker-end="url(#arrow)"/>
+        <line x1="395" y1="486" x2="395" y2="540" stroke="var(--ink-soft)" stroke-width="1.25" marker-end="url(#arrow)"/>
+        <line x1="545" y1="486" x2="545" y2="540" stroke="var(--ink-soft)" stroke-width="1.25" marker-end="url(#arrow)"/>
+
+        <!-- Diff table -->
+        <rect x="170" y="540" width="440" height="80" rx="12" fill="var(--panel)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="390" y="574" text-anchor="middle" font-size="17" font-weight="700" fill="var(--ink)">Diff Table</text>
+        <text x="390" y="596" text-anchor="middle" font-size="13" fill="var(--ink-soft)">Every result lands here</text>
+      </svg>
+    </div>
+    <p style="font-size:12.5px; color:var(--ink-soft); margin-top:14px; line-height:1.5;">
+      Both files are joined by their Key column(s) and every row pair is judged by fast, deterministic rules — free, instant, and always run first. Most rows are resolved with full confidence right there. The rows left over — wording differs but nothing is clearly right or wrong — are the only ones eligible for optional AI review, using whichever engine you choose: your own Cloud API key, or a small model running locally in your browser. Either path's output rejoins the same Diff Table as everything else.
+    </p>
+  </details>
+
+  <!-- Performance disclaimers -->
+  <details class="card disc" id="disclaimersSection">
+    <summary style="cursor:pointer; font-family:'Space Grotesk',sans-serif; font-size:15px; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; color:var(--ink-soft);">Performance expectations &amp; disclaimers (click to expand)</summary>
+    <div class="disc-grid" style="margin-top:14px;">
+      <div class="disc-col">
+        <h3>Fast mode (always runs first, free, instant)</h3>
+        <table class="tiers">
+          <tr><th>Rows</th><th>Experience</th></tr>
+          <tr><td>Up to ~60k</td><td>Instant, fully interactive</td></tr>
+          <tr><td>~60k–200k</td><td>A few seconds, still comfortable</td></tr>
+          <tr><td>200k+</td><td>Works, but consider splitting the file</td></tr>
+        </table>
+      </div>
+      <div class="disc-col">
+        <h3>AI review (optional, only re-checks Fast's mismatches)</h3>
+        <table class="tiers">
+          <tr><th>Rows queued for AI</th><th>Expect</th></tr>
+          <tr><td><span class="tier-dot g"></span>Up to ~500</td><td>5–15 min</td></tr>
+          <tr><td><span class="tier-dot a"></span>~500–2,000</td><td>15–60 min, run in background</td></tr>
+          <tr><td><span class="tier-dot r"></span>2,000+</td><td>1+ hours — treat as unattended/overnight</td></tr>
+        </table>
+      </div>
+    </div>
+    <div class="caveat">AI review speed depends heavily on your device and what else is running. Local AI mode needs a browser with WebGPU (recent Chrome/Edge) — it may be disabled by organization IT policy on locked-down machines. These figures are estimates, not guarantees; the live progress bar during AI review will show a measured, updating ETA once it starts.</div>
+  </details>
+
+  <footer>Diff Ledger — schema-agnostic CSV comparison. Fast mode runs 100% locally. AI review is optional and only touches Fast's flagged mismatches.</footer>
+</div>
+
+<script src="js/script.js"></script>
+</body>
+</html>
